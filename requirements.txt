@@ -8,6 +8,7 @@ SQLAlchemy==2.1.6
 alembic==1.20.1
 psycopg[binary]==3.3.6
 pwdlib[argon2]==0.3.1
+PyJWT==2.15.1
 
 # Transitive
 annotated-doc==0.0.5

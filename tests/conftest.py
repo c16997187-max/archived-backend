@@ -1,15 +1,22 @@
+import itertools
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import pytest
 from alembic import command
 from alembic.config import Config
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
-from app.db.session import CONNECT_TIMEOUT_SECONDS
+from app.config import Settings, get_settings
+from app.db.session import CONNECT_TIMEOUT_SECONDS, get_db
+from app.main import create_app
+from app.models import User
+from app.services.passwords import hash_password
 
 
 def _test_database_url() -> str:
@@ -67,3 +74,69 @@ def db(db_engine: Engine) -> Iterator[Session]:
         finally:
             session.close()
             outer.rollback()
+
+
+# --- API fixtures (Phase 4) ---------------------------------------------------
+
+# Fake credentials for test accounts only.
+TEST_PASSWORD = "test-only-password"
+TEST_JWT_SECRET = "test-only-jwt-secret-" + "x" * 32
+# Hashed once: Argon2 is deliberately slow, and most tests need many users.
+_TEST_PASSWORD_HASH = hash_password(TEST_PASSWORD)
+
+
+@pytest.fixture
+def settings() -> Settings:
+    return Settings(_env_file=None, app_env="development", jwt_secret=TEST_JWT_SECRET)
+
+
+@pytest.fixture
+def app(db: Session, settings: Settings) -> FastAPI:
+    """App whose requests share the test's rolled-back session. Service commits
+    only release a savepoint, so nothing outlives the test."""
+    app = create_app(settings)
+    app.dependency_overrides[get_db] = lambda: db
+    return app
+
+
+@pytest.fixture
+def client(app: FastAPI) -> Iterator[TestClient]:
+    with TestClient(app) as client:
+        yield client
+
+
+@pytest.fixture
+def make_user(db: Session) -> Callable[..., User]:
+    counter = itertools.count(1)
+
+    def _make(role: str = "registrar", password: str = TEST_PASSWORD, **fields: Any) -> User:
+        n = next(counter)
+        user = User(
+            id_number=f"T-{n:04d}",
+            full_name=f"Test {role.title()} {n}",
+            role=role,
+            password_hash=_TEST_PASSWORD_HASH
+            if password == TEST_PASSWORD
+            else hash_password(password),
+            **fields,
+        )
+        db.add(user)
+        db.flush()
+        return user
+
+    return _make
+
+
+@pytest.fixture
+def login(client: TestClient) -> Callable[..., dict[str, str]]:
+    """Log `user` in through the API and return the Authorization header."""
+
+    def _login(user: User, password: str = TEST_PASSWORD, remember_me: bool = False):
+        response = client.post(
+            "/api/auth/login",
+            json={"id_number": user.id_number, "password": password, "remember_me": remember_me},
+        )
+        assert response.status_code == 200, response.text
+        return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+    return _login
