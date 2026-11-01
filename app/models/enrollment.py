@@ -1,12 +1,12 @@
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, ForeignKeyConstraint, Index, text
+from sqlalchemy import CheckConstraint, ForeignKey, ForeignKeyConstraint, Index, SmallInteger, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models._common import created_at, one_of, pk, updated_at
 from app.models.learner import Learner
-from app.models.school import SchoolYear, Section
+from app.models.school import KINDERGARTEN, MAX_GRADE, SchoolYear, Section
 
 ENROLLMENT_STATUSES = ("draft", "pending_review", "approved", "rejected")
 
@@ -34,12 +34,18 @@ class Enrollment(Base):
             name="fk_enrollments_section_in_school_year",
         ),
         one_of("status", ENROLLMENT_STATUSES, "status"),
+        CheckConstraint(
+            f"grade_level BETWEEN {KINDERGARTEN} AND {MAX_GRADE}", name="grade_level_k_to_12"
+        ),
     )
 
     id: Mapped[int] = pk()
     learner_id: Mapped[int] = mapped_column(ForeignKey("learners.id"))
     school_year_id: Mapped[int] = mapped_column(ForeignKey("school_years.id"))
     section_id: Mapped[int | None]
+    # Kept here because a draft may have a grade before it has a section. Matches
+    # the section when one is set (enforced in app/services/enrollments.py).
+    grade_level: Mapped[int | None] = mapped_column(SmallInteger)
     status: Mapped[str] = mapped_column(server_default=text("'draft'"))
     enrolled_at: Mapped[datetime | None]
     remarks: Mapped[str | None]

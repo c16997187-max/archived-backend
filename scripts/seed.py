@@ -124,6 +124,7 @@ def seed(session: Session, admin_password: str, today: date) -> dict[str, int]:
                 learner=learner,
                 school_year=school_year,
                 section=section,
+                grade_level=section.grade_level,
                 status=status,
                 enrolled_at=datetime.now(UTC) if status == "approved" else None,
             )

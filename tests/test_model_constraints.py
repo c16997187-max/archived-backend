@@ -236,3 +236,15 @@ def test_name_search_indexes_exist(db):
         "ix_learners_last_name_trgm",
         "ix_learners_first_name_trgm",
     } <= indexes
+
+
+@pytest.mark.parametrize("grade_level", [-1, 13])
+def test_enrollment_grade_level_must_be_k_to_12(db, grade_level):
+    year, learner = make_year(), make_learner()
+    add(db, year, learner)
+
+    assert_rejected(
+        db,
+        "ck_enrollments_grade_level_k_to_12",
+        Enrollment(learner_id=learner.id, school_year_id=year.id, grade_level=grade_level),
+    )

@@ -3,7 +3,7 @@ from collections.abc import Callable
 from typing import Annotated
 
 import jwt
-from fastapi import Depends, Request
+from fastapi import Depends, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,7 @@ from app.db.session import get_db
 from app.errors import ApiError
 from app.models import User
 from app.models.user import ROLES
+from app.schemas.common import DEFAULT_PAGE_SIZE, MAX_PAGE, MAX_PAGE_SIZE, PageRequest
 from app.services.tokens import decode_access_token
 
 _bearer = HTTPBearer(auto_error=False)
@@ -34,6 +35,16 @@ def client_ip(request: Request) -> str | None:
 
 DbSession = Annotated[Session, Depends(get_db)]
 AppSettings = Annotated[Settings, Depends(get_app_settings)]
+
+
+def get_paging(
+    page: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
+) -> PageRequest:
+    return PageRequest(page=page, page_size=page_size)
+
+
+Paging = Annotated[PageRequest, Depends(get_paging)]
 
 
 def get_current_user(

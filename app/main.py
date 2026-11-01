@@ -1,13 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, health, users
+from app.api import auth, dashboard, enrollments, health, learners, school_setup, users
 from app.api.errors import register_error_handlers
 from app.config import Settings, get_settings
+from app.log_filters import install_log_filters
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    install_log_filters()
     # /docs loads Swagger UI from a CDN, so it only works on a dev machine
     # with internet. Production (the offline host PC) exposes no API docs.
     docs_enabled = settings.app_env != "production"
@@ -34,6 +36,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
     app.include_router(users.router, prefix="/api")
+    app.include_router(dashboard.router, prefix="/api")
+    app.include_router(enrollments.router, prefix="/api")
+    app.include_router(learners.router, prefix="/api")
+    app.include_router(school_setup.router, prefix="/api")
     return app
 
 

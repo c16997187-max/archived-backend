@@ -1,6 +1,7 @@
 import itertools
 import os
 from collections.abc import Callable, Iterator
+from datetime import date
 from typing import Any
 
 import pytest
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db.session import CONNECT_TIMEOUT_SECONDS, get_db
 from app.main import create_app
-from app.models import User
+from app.models import Enrollment, Learner, SchoolYear, Section, User
 from app.services.passwords import hash_password
 
 
@@ -140,3 +141,72 @@ def login(client: TestClient) -> Callable[..., dict[str, str]]:
         return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
     return _login
+
+
+# --- Record fixtures (Phase 5). All values are fake. ------------------------------
+
+
+@pytest.fixture
+def make_year(db: Session) -> Callable[..., SchoolYear]:
+    counter = itertools.count(2000)
+
+    def _make(is_current: bool = False, start_year: int | None = None) -> SchoolYear:
+        start = start_year or next(counter)
+        year = SchoolYear(
+            label=f"{start}-{start + 1}",
+            start_date=date(start, 6, 1),
+            end_date=date(start + 1, 3, 31),
+            is_current=is_current,
+        )
+        db.add(year)
+        db.flush()
+        return year
+
+    return _make
+
+
+@pytest.fixture
+def make_section(db: Session) -> Callable[..., Section]:
+    counter = itertools.count(1)
+
+    def _make(year: SchoolYear, grade_level: int = 8, name: str | None = None) -> Section:
+        section = Section(
+            school_year_id=year.id,
+            grade_level=grade_level,
+            name=name or f"Testsection {next(counter)}",
+        )
+        db.add(section)
+        db.flush()
+        return section
+
+    return _make
+
+
+@pytest.fixture
+def make_learner(db: Session) -> Callable[..., Learner]:
+    def _make(last_name: str = "Testlast", first_name: str = "Testfirst", **fields: Any) -> Learner:
+        learner = Learner(last_name=last_name, first_name=first_name, **fields)
+        db.add(learner)
+        db.flush()
+        return learner
+
+    return _make
+
+
+@pytest.fixture
+def make_enrollment(db: Session) -> Callable[..., Enrollment]:
+    def _make(
+        learner: Learner, year: SchoolYear, section: Section | None = None, **fields: Any
+    ) -> Enrollment:
+        fields.setdefault("grade_level", section.grade_level if section else None)
+        enrollment = Enrollment(
+            learner_id=learner.id,
+            school_year_id=year.id,
+            section_id=section.id if section else None,
+            **fields,
+        )
+        db.add(enrollment)
+        db.flush()
+        return enrollment
+
+    return _make
