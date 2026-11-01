@@ -1,4 +1,5 @@
 import logging
+import re
 
 
 class StripQueryString(logging.Filter):
@@ -20,9 +21,33 @@ class StripQueryString(logging.Filter):
         return True
 
 
+class RedactCaptureToken(logging.Filter):
+    """Keep capture tokens out of Uvicorn's access log: they sit in the URL path.
+
+    Numeric segments are session IDs, which are not secret, so they stay readable.
+    """
+
+    _PATH_ARG = 2
+    _TOKEN_IN_PATH = re.compile(r"^(/m/|/api/capture-sessions/)(?!\d+(?:[/?]|$))[^/?]+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) > self._PATH_ARG:
+            path = args[self._PATH_ARG]
+            if isinstance(path, str):
+                record.args = (
+                    *args[: self._PATH_ARG],
+                    self._TOKEN_IN_PATH.sub(r"\1<token>", path),
+                    *args[self._PATH_ARG + 1 :],
+                )
+        return True
+
+
 _strip_query_string = StripQueryString()
+_redact_capture_token = RedactCaptureToken()
 
 
 def install_log_filters() -> None:
     # One shared instance: addFilter ignores it when create_app runs again.
     logging.getLogger("uvicorn.access").addFilter(_strip_query_string)
+    logging.getLogger("uvicorn.access").addFilter(_redact_capture_token)

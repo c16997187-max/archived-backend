@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import CheckConstraint, ForeignKey, String, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, ForeignKey, SmallInteger, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -19,7 +19,10 @@ class CaptureSession(Base):
     __table_args__ = (
         UniqueConstraint("token_hash"),
         UniqueConstraint("reference_no"),
+        UniqueConstraint("phone_token_hash"),
         one_of("status", CAPTURE_SESSION_STATUSES, "status"),
+        CheckConstraint("upload_count >= 0", name="upload_count_not_negative"),
+        CheckConstraint("duplicate_count >= 0", name="duplicate_count_not_negative"),
     )
 
     id: Mapped[int] = pk()
@@ -28,6 +31,11 @@ class CaptureSession(Base):
     reference_no: Mapped[str]
     status: Mapped[str] = mapped_column(server_default=text("'open'"))
     expires_at: Mapped[datetime]
+    # Hash of the phone's upload cookie; cleared when the session closes or expires.
+    phone_token_hash: Mapped[str | None]
+    # Kept here, not counted from documents: a duplicate upload creates no row.
+    upload_count: Mapped[int] = mapped_column(SmallInteger, server_default=text("0"), default=0)
+    duplicate_count: Mapped[int] = mapped_column(SmallInteger, server_default=text("0"), default=0)
     created_at: Mapped[datetime] = created_at()
 
 
@@ -47,7 +55,11 @@ class Document(Base):
     mime_type: Mapped[str]
     source: Mapped[str]
     uploaded_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    capture_session_id: Mapped[int | None] = mapped_column(ForeignKey("capture_sessions.id"))
+    capture_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("capture_sessions.id"), index=True
+    )
+    # {"top_left": {"x", "y"}, ...} as 0..1 fractions of the EXIF-oriented image.
+    crop_corners: Mapped[dict[str, Any] | None]
     created_at: Mapped[datetime] = created_at()
 
 

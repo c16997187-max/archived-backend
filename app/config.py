@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     cors_origins: Annotated[list[str] | None, NoDecode] = None
     # Dev-only: admin password for scripts/seed.py. Unset means generate one.
     seed_admin_password: str | None = None
+    # Address phones use to reach this PC, for the QR code. Unset means the address of
+    # the desktop's own request, which is localhost when used on the host PC itself.
+    public_base_url: str | None = None
 
     @model_validator(mode="before")
     @classmethod

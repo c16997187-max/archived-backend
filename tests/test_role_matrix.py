@@ -1,10 +1,13 @@
 """Every role against every protected route, plus a guard that no route skips
 require_role. When you add a route, add it to PROTECTED_ROUTES below."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from fastapi.routing import iter_route_contexts
 
 from app.main import create_app
+from app.models import CaptureSession
 from tests.conftest import TEST_PASSWORD
 
 # The only routes allowed without require_role (see app/api/auth.py, app/api/health.py).
@@ -13,6 +16,11 @@ PUBLIC_ROUTES = {
     ("POST", "/api/auth/login"),
     ("POST", "/api/auth/refresh"),
     ("POST", "/api/auth/logout"),
+    # A phone has no account: the capture token, and for images the cookie from
+    # claim, stand in for a role. See tests/test_capture_api.py.
+    ("GET", "/m/{token}"),
+    ("POST", "/api/capture-sessions/{token}/claim"),
+    ("POST", "/api/capture-sessions/{token}/images"),
 }
 
 ROLES_UNDER_TEST = ["anonymous", "admin", "registrar", "reviewer"]
@@ -76,6 +84,24 @@ PROTECTED_ROUTES = {
         "anonymous": 401,
         "admin": 201,
         "registrar": 403,
+        "reviewer": 403,
+    },
+    ("POST", "/api/capture-sessions"): {
+        "anonymous": 401,
+        "admin": 201,
+        "registrar": 201,
+        "reviewer": 403,
+    },
+    ("GET", "/api/capture-sessions/{session_id}"): {
+        "anonymous": 401,
+        "admin": 200,
+        "registrar": 200,
+        "reviewer": 403,
+    },
+    ("POST", "/api/capture-sessions/{session_id}/close"): {
+        "anonymous": 401,
+        "admin": 200,
+        "registrar": 200,
         "reviewer": 403,
     },
 }
@@ -154,16 +180,24 @@ def test_role_matrix_covers_every_protected_route():
 
 @pytest.mark.parametrize("role", ROLES_UNDER_TEST)
 @pytest.mark.parametrize(("method", "path"), sorted(PROTECTED_ROUTES))
-def test_role_access(client, make_user, make_year, make_learner, login, method, path, role):
+def test_role_access(client, db, make_user, make_year, make_learner, login, method, path, role):
     target = make_user("registrar")
     year = make_year()
     learner = make_learner()
+    capture = CaptureSession(
+        token_hash="f" * 64,
+        user_id=target.id,
+        reference_no="CS-000000-ROLES",
+        expires_at=datetime.now(UTC) + timedelta(minutes=10),
+    )
+    db.add(capture)
+    db.flush()
     headers = {} if role == "anonymous" else login(make_user(role))
     body = REQUEST_BODIES.get((method, path))
 
     response = client.request(
         method,
-        path.format(user_id=target.id, learner_id=learner.id),
+        path.format(user_id=target.id, learner_id=learner.id, session_id=capture.id),
         json=body(year) if body else None,
         headers=headers,
     )

@@ -17,6 +17,9 @@ PUBLIC_OPERATIONS = {
     ("post", "/api/auth/login"),
     ("post", "/api/auth/refresh"),
     ("post", "/api/auth/logout"),
+    # A phone has no account and claims with the token alone. Images uses the cookie,
+    # so it does document 401 and 403.
+    ("post", "/api/capture-sessions/{token}/claim"),
 }
 ERROR_SCHEMAS = {"#/components/schemas/ErrorResponse", "#/components/schemas/DuplicateLearnerError"}
 
@@ -97,6 +100,33 @@ def test_enrollment_409_documents_the_matches(schema):
     )
     duplicate = schema["components"]["schemas"]["DuplicateLearnerError"]
     assert {"error", "fields", "matches"} == set(duplicate["properties"])
+
+
+def test_capture_upload_documents_its_errors(schema):
+    operation = schema["paths"]["/api/capture-sessions/{token}/images"]["post"]
+
+    assert {"200", "201", "401", "403", "404", "409", "410", "411", "413", "415", "422", "507"} <= (
+        set(operation["responses"])
+    )
+    assert set(operation["requestBody"]["content"]) == {"multipart/form-data"}
+
+
+def test_capture_storage_full_uses_our_format(schema):
+    operation = schema["paths"]["/api/capture-sessions/{token}/images"]["post"]
+    ref = operation["responses"]["507"]["content"]["application/json"]["schema"]["$ref"]
+
+    assert ref in ERROR_SCHEMAS
+
+
+def test_capture_claim_documents_its_errors(schema):
+    responses = schema["paths"]["/api/capture-sessions/{token}/claim"]["post"]["responses"]
+
+    assert {"404", "409", "410", "422"} <= set(responses)
+    assert "403" not in responses
+
+
+def test_phone_page_is_not_in_the_api_docs(schema):
+    assert "/m/{token}" not in schema["paths"]
 
 
 def test_public_routes_with_no_role_check_do_not_claim_403(schema):
