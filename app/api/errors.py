@@ -1,12 +1,29 @@
+import logging
+import traceback
+
+import psycopg
 from fastapi import FastAPI, Request
-from fastapi.exceptions import RequestValidationError
+from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
+from sqlalchemy.exc import SQLAlchemyError, StatementError
 from starlette.exceptions import HTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.errors import ApiError
 
+logger = logging.getLogger(__name__)
+
 # Codes for errors Starlette raises itself (unknown path, wrong method, ...).
 HTTP_ERROR_CODES = {404: "not_found", 405: "method_not_allowed"}
+
+# The messages of these quote the values they failed on, which can be student data.
+_MESSAGE_MAY_HOLD_STUDENT_DATA = (
+    SQLAlchemyError,
+    psycopg.Error,
+    ValidationError,
+    ResponseValidationError,
+)
 
 
 def error_response(
@@ -25,8 +42,73 @@ def _field_name(loc: tuple) -> str:
     return ".".join(parts) or "request"
 
 
+def _safe_message(exc: BaseException) -> str:
+    if not isinstance(exc, _MESSAGE_MAY_HOLD_STUDENT_DATA):
+        return str(exc)
+    # What still locates the failure: SQL with placeholders, the code and the constraint.
+    if isinstance(exc, StatementError):
+        return f"[message hidden] SQL: {exc.statement}"
+    if isinstance(exc, psycopg.Error):
+        return f"[message hidden] sqlstate={exc.sqlstate} constraint={exc.diag.constraint_name}"
+    return "[message hidden]"
+
+
+def _safe_traceback(exc: BaseException) -> str:
+    """Every traceback in the exception chain, without any values that may be student data."""
+    parts: list[str] = []
+    current: BaseException | None = exc
+    while current is not None:
+        name = f"{type(current).__module__}.{type(current).__qualname__}"
+        parts.append(
+            "".join(traceback.format_tb(current.__traceback__))
+            + f"{name}: {_safe_message(current)}"
+        )
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    return "\n\nCaused by:\n".join(parts)
+
+
+class CatchAllErrorsMiddleware:
+    """Turn an unexpected exception into a 500 in our format, with no details exposed.
+
+    Not `@app.exception_handler(Exception)`: Starlette runs that outside CORSMiddleware,
+    so the Vite dev UI could not read the response, and then re-raises for Uvicorn to log
+    the raw exception, whose message can hold student data.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        response_started = False
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal response_started
+            response_started = response_started or message["type"] == "http.response.start"
+            await send(message)
+
+        try:
+            await self.app(scope, receive, tracking_send)
+        except Exception as exc:
+            # The route's template, not the URL: paths hold capture tokens, queries hold names.
+            route = getattr(scope.get("route"), "path", "<no route>")
+            logger.error(
+                "Unhandled error on %s %s\n%s", scope["method"], route, _safe_traceback(exc)
+            )
+            # Once started, the status is already sent; returning makes Uvicorn drop the
+            # connection, so the client cannot take the cut-off response as complete.
+            if not response_started:
+                await error_response(500, "internal_error")(scope, receive, send)
+
+
 def register_error_handlers(app: FastAPI) -> None:
     """Give every error the one format the UI understands (CLAUDE.md conventions)."""
+    app.add_middleware(CatchAllErrorsMiddleware)
 
     @app.exception_handler(ApiError)
     async def _api_error(request: Request, exc: ApiError) -> JSONResponse:

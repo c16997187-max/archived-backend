@@ -57,6 +57,10 @@ _ERROR_DOCS: dict[int, tuple[str, dict[str, Any]]] = {
         "Account locked after too many failed logins",
         {"error": "account_locked", "fields": {"locked_until": "2026-11-01T08:15:00+00:00"}},
     ),
+    500: (
+        "Unexpected server error; details are only in the server log",
+        {"error": "internal_error", "fields": {}},
+    ),
     507: (
         "The host PC's disk is full; the photo was not saved",
         {"error": "storage_full", "fields": {}},

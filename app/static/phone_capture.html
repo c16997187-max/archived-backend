@@ -29,7 +29,7 @@
                    background: #1f5fbf; border: 3px solid #fff; box-shadow: 0 0 3px #0008; }
   progress { width: 100%; height: 12px; margin-top: 12px; }
   [hidden] { display: none !important; }
-  #file-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  #file-input, #gallery-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 </style>
 </head>
 <body>
@@ -42,11 +42,13 @@
   <section id="ready" hidden>
     <input id="file-input" type="file" accept="image/*" capture="environment">
     <label class="big-button" for="file-input">Take a photo of the form</label>
+    <input id="gallery-input" type="file" accept="image/*">
+    <label class="big-button secondary" for="gallery-input">Upload from gallery</label>
   </section>
 
   <section id="crop" hidden>
     <div id="stage">
-      <img id="photo" alt="The photo you just took">
+      <img id="photo" alt="The photo to crop">
       <svg id="outline" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
         <polygon id="outline-shape" fill="rgba(31,95,191,.15)" stroke="#1f5fbf"
                  stroke-width="2" vector-effect="non-scaling-stroke"></polygon>
@@ -80,9 +82,9 @@
     forbidden: "This phone is not paired with this session. Scan the QR code on the computer again.",
     upload_limit_reached: "This session is full (50 photos). Make a new QR code on the computer.",
     length_required: "The photo could not be sent. Please try again.",
-    file_too_large: "This photo is too large (15 MB limit). Use a lower camera resolution and retake.",
-    unsupported_image_type: "This file is not a usable photo. Please retake it.",
-    heic_conversion_failed: "This photo format could not be read. Set the camera to \"Most Compatible\" and retake.",
+    file_too_large: "This photo is too large (15 MB limit). Choose a smaller one, or retake it at a lower camera resolution.",
+    unsupported_image_type: "This file is not a usable photo. Choose a JPEG or PNG, or retake it.",
+    heic_conversion_failed: "This photo format could not be read. Choose a JPEG or PNG, or set the camera to \"Most Compatible\" and retake.",
     storage_full: "The school computer's disk is full, so the photo was NOT saved. Please tell the IT in-charge."
   };
   // After these, retrying with this session cannot work.
@@ -91,8 +93,8 @@
   var networkError = "Could not reach the school computer. Check that this phone is on the school Wi-Fi, then try again. Your photo is still here.";
 
   var el = {};
-  ["reference", "status", "ready", "crop", "done", "file-input", "stage", "photo", "outline-shape",
-   "progress", "submit", "retake", "another"].forEach(function (id) {
+  ["reference", "status", "ready", "crop", "done", "file-input", "gallery-input", "stage", "photo",
+   "outline-shape", "progress", "submit", "retake", "another"].forEach(function (id) {
     el[id] = document.getElementById(id);
   });
 
@@ -160,7 +162,9 @@
   function startOver(text, kind) {
     if (photoUrl) { URL.revokeObjectURL(photoUrl); photoUrl = null; }
     currentFile = null;
+    // Cleared so that choosing the same file again still fires `change`.
     el["file-input"].value = "";
+    el["gallery-input"].value = "";
     el.photo.removeAttribute("src");
     show("ready");
     say(text, kind);
@@ -242,8 +246,8 @@
     xhr.send(form);
   }
 
-  el["file-input"].addEventListener("change", function () {
-    var file = el["file-input"].files[0];
+  function photoChosen(event) {
+    var file = event.target.files[0];
     if (!file) { return; }
     currentFile = file;
     if (photoUrl) { URL.revokeObjectURL(photoUrl); }
@@ -254,7 +258,10 @@
     say("Drag the four dots to the corners of the form, then tap Submit.");
     resetCorners(0.05);
     el.photo.src = photoUrl;
-  });
+  }
+
+  el["file-input"].addEventListener("change", photoChosen);
+  el["gallery-input"].addEventListener("change", photoChosen);
 
   el.photo.addEventListener("error", function () {
     // Some browsers cannot display HEIC. The server still can, so send the whole photo.
@@ -265,7 +272,7 @@
   });
 
   el.submit.addEventListener("click", submit);
-  el.retake.addEventListener("click", function () { startOver("Take the photo again."); });
+  el.retake.addEventListener("click", function () { startOver("Take the photo again, or choose another."); });
   el.another.addEventListener("click", function () {
     startOver("Take the next photo.");
   });
