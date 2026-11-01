@@ -32,14 +32,76 @@ PROTECTED_ROUTES = {
         "registrar": 403,
         "reviewer": 403,
     },
+    ("POST", "/api/enrollments"): {
+        "anonymous": 401,
+        "admin": 201,
+        "registrar": 201,
+        "reviewer": 403,
+    },
+    ("GET", "/api/learners"): {"anonymous": 401, "admin": 200, "registrar": 200, "reviewer": 200},
+    ("GET", "/api/learners/{learner_id}"): {
+        "anonymous": 401,
+        "admin": 200,
+        "registrar": 200,
+        "reviewer": 200,
+    },
+    ("PATCH", "/api/learners/{learner_id}"): {
+        "anonymous": 401,
+        "admin": 200,
+        "registrar": 200,
+        "reviewer": 403,
+    },
+    ("GET", "/api/dashboard/summary"): {
+        "anonymous": 401,
+        "admin": 200,
+        "registrar": 200,
+        "reviewer": 200,
+    },
+    ("GET", "/api/school-years"): {
+        "anonymous": 401,
+        "admin": 200,
+        "registrar": 200,
+        "reviewer": 200,
+    },
+    ("POST", "/api/school-years"): {
+        "anonymous": 401,
+        "admin": 201,
+        "registrar": 403,
+        "reviewer": 403,
+    },
+    ("GET", "/api/sections"): {"anonymous": 401, "admin": 200, "registrar": 200, "reviewer": 200},
+    ("POST", "/api/sections"): {
+        "anonymous": 401,
+        "admin": 201,
+        "registrar": 403,
+        "reviewer": 403,
+    },
 }
 
+# (method, path) -> body, built from the school year made for each test.
 REQUEST_BODIES = {
-    "/api/auth/change-password": {
+    ("POST", "/api/auth/change-password"): lambda year: {
         "current_password": TEST_PASSWORD,
         "new_password": "new-test-only-password",
     },
-    "/api/users/{user_id}/reset-password": {"temporary_password": "temp-test-only-pw"},
+    ("POST", "/api/users/{user_id}/reset-password"): lambda year: {
+        "temporary_password": "temp-test-only-pw"
+    },
+    ("POST", "/api/enrollments"): lambda year: {
+        "school_year_id": year.id,
+        "learner": {"last_name": "Newlast", "first_name": "Newfirst"},
+    },
+    ("PATCH", "/api/learners/{learner_id}"): lambda year: {"middle_name": "Newmiddle"},
+    ("POST", "/api/school-years"): lambda year: {
+        "label": "2090-2091",
+        "start_date": "2090-06-01",
+        "end_date": "2091-03-31",
+    },
+    ("POST", "/api/sections"): lambda year: {
+        "school_year_id": year.id,
+        "grade_level": 8,
+        "name": "Newsection",
+    },
 }
 
 
@@ -84,14 +146,17 @@ def test_role_matrix_covers_every_protected_route():
 
 @pytest.mark.parametrize("role", ROLES_UNDER_TEST)
 @pytest.mark.parametrize(("method", "path"), sorted(PROTECTED_ROUTES))
-def test_role_access(client, make_user, login, method, path, role):
+def test_role_access(client, make_user, make_year, make_learner, login, method, path, role):
     target = make_user("registrar")
+    year = make_year()
+    learner = make_learner()
     headers = {} if role == "anonymous" else login(make_user(role))
+    body = REQUEST_BODIES.get((method, path))
 
     response = client.request(
         method,
-        path.format(user_id=target.id),
-        json=REQUEST_BODIES.get(path),
+        path.format(user_id=target.id, learner_id=learner.id),
+        json=body(year) if body else None,
         headers=headers,
     )
 
@@ -110,7 +175,7 @@ def test_forced_password_change_blocks_every_role(client, make_user, login, role
 
     response = client.post(
         f"/api/users/{user.id}/reset-password",
-        json=REQUEST_BODIES["/api/users/{user_id}/reset-password"],
+        json={"temporary_password": "temp-test-only-pw"},
         headers=headers,
     )
 

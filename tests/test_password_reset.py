@@ -165,3 +165,17 @@ def test_audit_log_never_contains_passwords_or_tokens(client, db, make_user, log
     for secret in secrets:
         assert secret not in dumped
     assert header["Authorization"].split()[1] not in dumped
+
+
+def test_reset_password_refuses_an_id_too_large_for_the_database(client, make_user, login):
+    headers = login(make_user("admin"))
+
+    response = client.post(
+        f"/api/users/{2**63}/reset-password",
+        json={"temporary_password": "temp-test-only-pw"},
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "validation_error"
+    assert "user_id" in response.json()["fields"]

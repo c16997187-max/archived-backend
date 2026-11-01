@@ -10,10 +10,12 @@ HTTP_ERROR_CODES = {404: "not_found", 405: "method_not_allowed"}
 
 
 def error_response(
-    status_code: int, error: str, fields: dict[str, str] | None = None, headers=None
+    status_code: int, error: str, fields: dict[str, str] | None = None, headers=None, extra=None
 ) -> JSONResponse:
     return JSONResponse(
-        {"error": error, "fields": fields or {}}, status_code=status_code, headers=headers
+        {"error": error, "fields": fields or {}, **(extra or {})},
+        status_code=status_code,
+        headers=headers,
     )
 
 
@@ -28,7 +30,7 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(ApiError)
     async def _api_error(request: Request, exc: ApiError) -> JSONResponse:
-        return error_response(exc.status_code, exc.error, exc.fields, exc.headers)
+        return error_response(exc.status_code, exc.error, exc.fields, exc.headers, exc.extra)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:

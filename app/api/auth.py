@@ -7,6 +7,7 @@ from app.config import Settings
 from app.models import User
 from app.models.user import ROLES
 from app.schemas.auth import ChangePasswordRequest, LoginRequest, TokenResponse
+from app.schemas.errors import error_responses
 from app.schemas.users import UserOut
 from app.services import auth as auth_service
 from app.services.auth import IssuedSession
@@ -45,7 +46,7 @@ def _token_response(issued: IssuedSession, settings: Settings) -> TokenResponse:
     )
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=TokenResponse, responses=error_responses(401, 403, 422, 423))
 def login(
     body: LoginRequest,
     request: Request,
@@ -60,7 +61,7 @@ def login(
     return _token_response(issued, settings)
 
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post("/refresh", response_model=TokenResponse, responses=error_responses(401, 422))
 def refresh(
     request: Request,
     response: Response,
@@ -73,7 +74,7 @@ def refresh(
     return _token_response(issued, settings)
 
 
-@router.post("/logout", status_code=204)
+@router.post("/logout", status_code=204, responses=error_responses(422))
 def logout(
     request: Request,
     response: Response,
@@ -91,7 +92,9 @@ def logout(
     )
 
 
-@router.post("/change-password", response_model=TokenResponse)
+@router.post(
+    "/change-password", response_model=TokenResponse, responses=error_responses(401, 403, 422)
+)
 def change_password(
     body: ChangePasswordRequest,
     request: Request,

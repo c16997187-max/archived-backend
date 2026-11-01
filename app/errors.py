@@ -1,3 +1,6 @@
+from typing import Any
+
+
 class ApiError(Exception):
     """An error the client should see, rendered as `{"error": code, "fields": {...}}`.
 
@@ -10,9 +13,12 @@ class ApiError(Exception):
         error: str,
         fields: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(error)
         self.status_code = status_code
         self.error = error
         self.fields = fields or {}
         self.headers = headers
+        # Added next to `error` and `fields`, e.g. the `matches` of a likely duplicate.
+        self.extra = extra

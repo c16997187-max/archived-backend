@@ -23,6 +23,14 @@ def test_seed_creates_admin_year_sections_and_20_learners(db):
     assert db.scalars(select(AuditLog.action)).all() == ["seed"]
 
 
+def test_seeded_enrollments_take_their_grade_from_the_section(db):
+    seed(db, admin_password="test-only-password", today=date(2026, 11, 1))
+    db.flush()
+
+    for enrollment in db.scalars(select(Enrollment)):
+        assert enrollment.grade_level == enrollment.section.grade_level
+
+
 def test_seeded_learners_have_fake_contact_numbers(db):
     seed(db, admin_password="test-only-password", today=date(2026, 11, 1))
     db.flush()
