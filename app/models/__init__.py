@@ -1,6 +1,7 @@
 """Import every model here so Alembic sees all tables on Base.metadata."""
 
 from app.models.audit import AuditLog
+from app.models.auth import RefreshToken
 from app.models.capture import CaptureSession, Document, Extraction, FormTemplate, OcrResult
 from app.models.enrollment import Enrollment
 from app.models.job import Job
@@ -18,6 +19,7 @@ __all__ = [
     "Job",
     "Learner",
     "OcrResult",
+    "RefreshToken",
     "SchoolYear",
     "Section",
     "User",
