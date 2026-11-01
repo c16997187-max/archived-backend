@@ -4,9 +4,12 @@
 !.env.example
 CLAUDE.local.md
 
-# Runtime data (may contain student records) and model weights
-storage/
-models/
+# Runtime data (may contain student records) and model weights.
+# Anchored to the repo root so app/models/ (SQLAlchemy tables) is not ignored.
+/storage/*
+!/storage/.gitkeep
+/models/*
+!/models/.gitkeep
 **/private_data/
 
 # Python
