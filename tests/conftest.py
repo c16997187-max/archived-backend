@@ -2,6 +2,7 @@ import itertools
 import os
 from collections.abc import Callable, Iterator
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -87,8 +88,10 @@ _TEST_PASSWORD_HASH = hash_password(TEST_PASSWORD)
 
 
 @pytest.fixture
-def settings() -> Settings:
-    return Settings(_env_file=None, app_env="development", jwt_secret=TEST_JWT_SECRET)
+def settings(tmp_path: Path) -> Settings:
+    return Settings(
+        _env_file=None, app_env="development", jwt_secret=TEST_JWT_SECRET, storage_dir=tmp_path
+    )
 
 
 @pytest.fixture

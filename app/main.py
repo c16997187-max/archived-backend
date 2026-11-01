@@ -1,15 +1,31 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, dashboard, enrollments, health, learners, school_setup, users
+from app.api import (
+    auth,
+    capture,
+    dashboard,
+    enrollments,
+    health,
+    learners,
+    phone_page,
+    school_setup,
+    users,
+)
 from app.api.errors import register_error_handlers
 from app.config import Settings, get_settings
 from app.log_filters import install_log_filters
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     install_log_filters()
+    if settings.app_env == "production" and not settings.public_base_url:
+        logger.warning("PUBLIC_BASE_URL is not set: capture QR codes may not work on phones")
     # /docs loads Swagger UI from a CDN, so it only works on a dev machine
     # with internet. Production (the offline host PC) exposes no API docs.
     docs_enabled = settings.app_env != "production"
@@ -40,6 +56,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(enrollments.router, prefix="/api")
     app.include_router(learners.router, prefix="/api")
     app.include_router(school_setup.router, prefix="/api")
+    app.include_router(capture.router, prefix="/api")
+    app.include_router(phone_page.router)
     return app
 
 

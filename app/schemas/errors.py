@@ -33,6 +33,19 @@ _ERROR_DOCS: dict[int, tuple[str, dict[str, Any]]] = {
         "Conflicts with an existing record",
         {"error": "duplicate", "fields": {"lrn": "Already used by another learner"}},
     ),
+    410: (
+        "`session_expired` or `session_closed`: the capture session has ended",
+        {"error": "session_expired", "fields": {}},
+    ),
+    411: ("The request must state its size", {"error": "length_required", "fields": {}}),
+    413: (
+        "The file is over the upload limit",
+        {"error": "file_too_large", "fields": {"file": "Must be 15 MB or smaller"}},
+    ),
+    415: (
+        "`unsupported_image_type`, or `heic_conversion_failed` for a HEIC that cannot be read",
+        {"error": "unsupported_image_type", "fields": {"file": "Must be a JPEG or PNG photo"}},
+    ),
     422: (
         "Invalid input; `fields` has one message per form field",
         {
@@ -43,6 +56,10 @@ _ERROR_DOCS: dict[int, tuple[str, dict[str, Any]]] = {
     423: (
         "Account locked after too many failed logins",
         {"error": "account_locked", "fields": {"locked_until": "2026-11-01T08:15:00+00:00"}},
+    ),
+    507: (
+        "The host PC's disk is full; the photo was not saved",
+        {"error": "storage_full", "fields": {}},
     ),
 }
 
