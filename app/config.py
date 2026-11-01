@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     models_dir: Path = Path("models")
     # Dev-only default; production must set JWT_SECRET in .env.
     jwt_secret: str = "dev-insecure-change-me"
+    # Dev-only: admin password for scripts/seed.py. Unset means generate one.
+    seed_admin_password: str | None = None
 
 
 @lru_cache

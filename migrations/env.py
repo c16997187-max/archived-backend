@@ -31,7 +31,15 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations against the database in DATABASE_URL."""
+    """Run migrations against the database in DATABASE_URL, or on a connection
+    passed in `config.attributes["connection"]` (used by the test suite)."""
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        context.configure(connection=connection, target_metadata=target_metadata)
+        with context.begin_transaction():
+            context.run_migrations()
+        return
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
