@@ -19,10 +19,15 @@ using the `POSTGRES_*` values from `.env`.
 **Without Docker** (host PC): install PostgreSQL 17 natively, create a user and
 database, and set `DATABASE_URL` in `.env` to match. Then run `alembic upgrade head`.
 
+**Fake data for UI work:** `python -m scripts.seed` adds one admin (ID number
+`admin`, password from `SEED_ADMIN_PASSWORD` or printed once), the current school
+year, a section per grade and 20 fake learners. It only runs on an empty database.
+To start over: `alembic downgrade base && alembic upgrade head`.
+
 ## Run
 
 - API: `uvicorn app.main:app --reload` (docs at http://127.0.0.1:8000/docs)
-- Tests: `pytest -q`
+- Tests: `pytest -q` (needs the database running; uses a separate `archived_test` database)
 - Lint/format: `ruff check . && ruff format .`
 - New migration: `alembic revision --autogenerate -m "msg"`
 
