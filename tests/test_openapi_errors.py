@@ -5,6 +5,10 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi.testclient import TestClient
+from pydantic import BaseModel, ValidationError
+from sqlalchemy import text
+from sqlalchemy.exc import DataError
 
 from app.log_filters import StripQueryString
 from app.main import create_app
@@ -44,7 +48,7 @@ def test_every_documented_error_uses_our_format(schema):
     wrong = []
     for method, path, operation in operations(schema):
         for status, response in operation["responses"].items():
-            if status.startswith("4"):
+            if status.startswith(("4", "5")):
                 ref = response["content"]["application/json"]["schema"].get("$ref")
                 if ref not in ERROR_SCHEMAS:
                     wrong.append((method, path, status, ref))
@@ -81,6 +85,16 @@ def test_routes_with_input_document_422(schema):
         for method, path, operation in operations(schema)
         if (operation.get("parameters") or operation.get("requestBody"))
         and "422" not in operation["responses"]
+    ]
+
+    assert missing == []
+
+
+def test_every_route_documents_500(schema):
+    missing = [
+        (method, path)
+        for method, path, operation in operations(schema)
+        if "500" not in operation["responses"]
     ]
 
     assert missing == []
@@ -172,6 +186,137 @@ def test_real_423_matches(client, make_user):
 
     assert_error_format(response, 423, "account_locked")
     assert "locked_until" in response.json()["fields"]
+
+
+# --- unexpected errors -------------------------------------------------------------------
+
+DEV_ORIGIN = "http://ui.test:5173"
+# A fake value standing in for a student's data.
+FAKE_NAME = "Fakename"
+
+
+def app_that_raises(settings, exc):
+    settings.cors_origins = [DEV_ORIGIN]
+    app = create_app(settings)
+
+    @app.get("/api/boom/{token}")
+    def boom(token: str):
+        raise exc
+
+    return app
+
+
+@pytest.fixture
+def db_error(db):
+    """A real error from PostgreSQL: its message and parameters quote the value."""
+    try:
+        db.execute(text("SELECT CAST(:value AS int)"), {"value": FAKE_NAME})
+    except DataError as exc:
+        db.rollback()
+        return exc
+    raise AssertionError("the query should have failed")
+
+
+def validation_error():
+    class Learner(BaseModel):
+        lrn: int
+
+    try:
+        Learner(lrn=FAKE_NAME)
+    except ValidationError as exc:
+        return exc
+
+
+def error_log(caplog):
+    """What the catch-all logged. Must not be empty, or "not in" proves nothing."""
+    messages = [r.getMessage() for r in caplog.records if r.name == "app.api.errors"]
+    assert messages
+    return " ".join(messages)
+
+
+def test_unexpected_error_returns_500_with_no_details(settings):
+    app = app_that_raises(settings, RuntimeError("secret detail"))
+
+    with TestClient(app) as client:
+        response = client.get("/api/boom/abc")
+
+    assert_error_format(response, 500, "internal_error")
+    assert response.json() == {"error": "internal_error", "fields": {}}
+    assert "secret detail" not in response.text
+
+
+def test_unexpected_error_is_logged_with_its_traceback(settings, caplog):
+    app = app_that_raises(settings, RuntimeError("secret detail"))
+
+    with TestClient(app) as client:
+        client.get("/api/boom/abc")
+
+    record = next(r for r in caplog.records if r.name == "app.api.errors")
+    assert record.levelno == logging.ERROR
+    assert "GET /api/boom/{token}" in record.getMessage()
+    assert "builtins.RuntimeError: secret detail" in record.getMessage()
+    assert "in boom" in record.getMessage()
+
+
+def test_unexpected_error_log_holds_no_token_or_query(settings, caplog):
+    app = app_that_raises(settings, RuntimeError("boom"))
+
+    with TestClient(app) as client:
+        client.get("/api/boom/capture-token", params={"q": FAKE_NAME})
+
+    assert "capture-token" not in error_log(caplog)
+    assert FAKE_NAME not in error_log(caplog)
+
+
+def test_db_error_log_holds_no_student_data(settings, caplog, db_error):
+    app = app_that_raises(settings, db_error)
+
+    with TestClient(app) as client:
+        response = client.get("/api/boom/abc")
+
+    assert response.status_code == 500
+    assert FAKE_NAME in str(db_error)  # the value this test keeps out of the log
+    assert FAKE_NAME not in error_log(caplog)
+
+
+def test_validation_error_log_holds_no_student_data(settings, caplog):
+    error = validation_error()
+    app = app_that_raises(settings, error)
+
+    with TestClient(app) as client:
+        response = client.get("/api/boom/abc")
+
+    assert response.status_code == 500
+    assert FAKE_NAME in str(error)
+    assert FAKE_NAME not in error_log(caplog)
+
+
+def test_db_error_log_still_says_what_failed(settings, caplog, db_error):
+    app = app_that_raises(settings, db_error)
+
+    with TestClient(app) as client:
+        client.get("/api/boom/abc")
+
+    log = error_log(caplog)
+    assert "sqlalchemy.exc.DataError" in log
+    assert "SELECT CAST" in log
+    assert "sqlstate=22P02" in log
+
+
+def test_unexpected_error_can_be_read_by_the_dev_ui(settings):
+    app = app_that_raises(settings, RuntimeError("boom"))
+
+    with TestClient(app) as client:
+        response = client.get("/api/boom/abc", headers={"Origin": DEV_ORIGIN})
+
+    assert response.status_code == 500
+    assert response.headers["access-control-allow-origin"] == DEV_ORIGIN
+
+
+def test_expected_errors_do_not_reach_the_catch_all(client, caplog):
+    assert_error_format(client.get("/api/learners"), 401, "not_authenticated")
+
+    assert not [r for r in caplog.records if r.name == "app.api.errors"]
 
 
 # --- access log --------------------------------------------------------------------------

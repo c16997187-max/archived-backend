@@ -17,6 +17,7 @@ from app.api import (
 from app.api.errors import register_error_handlers
 from app.config import Settings, get_settings
 from app.log_filters import install_log_filters
+from app.schemas.errors import error_responses
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         docs_url="/docs" if docs_enabled else None,
         redoc_url="/redoc" if docs_enabled else None,
         openapi_url="/openapi.json" if docs_enabled else None,
+        responses=error_responses(500),  # any route can fail unexpectedly
     )
     app.state.settings = settings
     register_error_handlers(app)

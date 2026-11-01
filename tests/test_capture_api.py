@@ -549,8 +549,7 @@ def test_document_job_and_audit_roll_back_together(claimed, phone, db, monkeypat
 
     monkeypatch.setattr(capture_service.audit, "record", audit_fails)
 
-    with pytest.raises(RuntimeError):
-        post_image(phone, claimed["token"])
+    assert_error(post_image(phone, claimed["token"]), 500, "internal_error")
 
     db.rollback()
     assert count(db, Document) == 0
@@ -1335,6 +1334,24 @@ def test_phone_page_is_served_with_its_headers(client):
     csp = response.headers["content-security-policy"]
     assert "default-src 'none'" in csp
     assert "connect-src 'self'" in csp
+
+
+def test_phone_page_offers_the_gallery_as_a_second_choice(client):
+    page = client.get(f"/m/{'a' * 43}").text
+
+    # No `capture`, so the phone shows its gallery. No `multiple`: one file per upload.
+    assert '<input id="gallery-input" type="file" accept="image/*">' in page
+    assert page.index('for="file-input"') < page.index('for="gallery-input"')
+    assert '<label class="big-button" for="file-input">' in page
+    assert '<label class="big-button secondary" for="gallery-input">Upload from gallery<' in page
+
+
+def test_phone_page_sends_a_gallery_photo_through_the_same_crop(client):
+    page = client.get(f"/m/{'a' * 43}").text
+
+    assert 'el["file-input"].addEventListener("change", photoChosen)' in page
+    assert 'el["gallery-input"].addEventListener("change", photoChosen)' in page
+    assert 'el["gallery-input"].value = ""' in page
 
 
 def test_phone_page_works_offline(client):

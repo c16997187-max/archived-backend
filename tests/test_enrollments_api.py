@@ -87,8 +87,7 @@ def test_a_failed_audit_write_saves_nothing(client, db, make_user, login, year, 
 
     monkeypatch.setattr(learners_service.audit, "record", fail_for_enrollment)
 
-    with pytest.raises(RuntimeError):
-        post(client, headers, year, learner=new_learner())
+    assert post(client, headers, year, learner=new_learner()).status_code == 500
     db.rollback()  # what closing the request's session does in production
 
     assert count(db, Learner) == 0
