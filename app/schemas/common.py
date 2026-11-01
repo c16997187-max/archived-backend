@@ -17,6 +17,7 @@ from app.models.school import KINDERGARTEN, MAX_GRADE
 
 MAX_TEXT_LENGTH = 200
 MAX_SEARCH_LENGTH = 100
+MAX_ID_NUMBER_LENGTH = 64  # what login accepts
 MAX_BIGINT = 2**63 - 1
 
 DEFAULT_PAGE_SIZE = 25
@@ -95,6 +96,7 @@ _Text = Annotated[str, BeforeValidator(_clean_text), MaxLen(MAX_TEXT_LENGTH)]
 
 RequiredText = Annotated[str, BeforeValidator(_required_text), MaxLen(MAX_TEXT_LENGTH)]
 OptionalText = Annotated[_Text | None, BeforeValidator(_blank_to_none)]
+IdNumber = Annotated[str, BeforeValidator(_required_text), MaxLen(MAX_ID_NUMBER_LENGTH)]
 
 # Set here rather than with Query(max_length=...), which fails on a blank `?q=`.
 SearchText = Annotated[

@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Document, Enrollment, Learner, OcrResult, SchoolYear, Section, User
+from app.services.learners import _name_token_matches
 
 
 def assert_rejected(db: Session, constraint: str, obj: object) -> None:
@@ -233,9 +234,32 @@ def test_name_search_indexes_exist(db):
     assert {
         "ix_learners_lrn",
         "ix_learners_last_name_first_name",
-        "ix_learners_last_name_trgm",
-        "ix_learners_first_name_trgm",
+        "ix_learners_last_name_unaccent_trgm",
+        "ix_learners_first_name_unaccent_trgm",
     } <= indexes
+
+
+def test_unaccent_wrapper_is_immutable_so_it_can_be_indexed(db):
+    volatility = db.scalar(
+        text("SELECT provolatile FROM pg_proc WHERE proname = 'immutable_unaccent'")
+    )
+
+    assert volatility == "i"
+    assert db.scalar(text("SELECT immutable_unaccent('Peña Muñoz José')")) == "Pena Munoz Jose"
+
+
+def test_name_search_query_uses_the_unaccent_indexes(db):
+    add(db, make_learner(last_name="Peña"))
+    db.execute(text("SET LOCAL enable_seqscan = off"))
+    query = select(Learner.id).where(_name_token_matches("Pena"))
+    compiled = query.compile(dialect=db.get_bind().dialect)
+
+    plan = "\n".join(
+        row[0] for row in db.connection().exec_driver_sql(f"EXPLAIN {compiled}", compiled.params)
+    )
+
+    assert "ix_learners_last_name_unaccent_trgm" in plan
+    assert "ix_learners_first_name_unaccent_trgm" in plan
 
 
 @pytest.mark.parametrize("grade_level", [-1, 13])

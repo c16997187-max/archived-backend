@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import CheckConstraint, Index, String
+from sqlalchemy import CheckConstraint, Index, String, column, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -26,18 +26,19 @@ class Learner(Base):
         Index("uq_learners_lrn_active", "lrn", unique=True, postgresql_where="deleted_at IS NULL"),
         Index("ix_learners_lrn", "lrn"),
         Index("ix_learners_last_name_first_name", "last_name", "first_name"),
-        # Trigram indexes for fuzzy name search ("Santoz" finds "Santos").
+        # Trigram indexes for fuzzy name search ("Santoz" finds "Santos"), on the
+        # unaccented name so "Pena" finds "Peña". See app/services/learners.py.
         Index(
-            "ix_learners_last_name_trgm",
-            "last_name",
+            "ix_learners_last_name_unaccent_trgm",
+            func.immutable_unaccent(column("last_name")).label("last_name_unaccent"),
             postgresql_using="gin",
-            postgresql_ops={"last_name": "gin_trgm_ops"},
+            postgresql_ops={"last_name_unaccent": "gin_trgm_ops"},
         ),
         Index(
-            "ix_learners_first_name_trgm",
-            "first_name",
+            "ix_learners_first_name_unaccent_trgm",
+            func.immutable_unaccent(column("first_name")).label("first_name_unaccent"),
             postgresql_using="gin",
-            postgresql_ops={"first_name": "gin_trgm_ops"},
+            postgresql_ops={"first_name_unaccent": "gin_trgm_ops"},
         ),
     )
 
