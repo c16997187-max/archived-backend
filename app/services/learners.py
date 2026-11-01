@@ -4,7 +4,7 @@ import re
 from datetime import date
 from typing import Any
 
-from sqlalchemy import ColumnElement, and_, exists, false, func, or_, select
+from sqlalchemy import ColumnElement, and_, exists, false, func, literal, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.errors import ApiError
@@ -53,14 +53,30 @@ def _newest(enrollments: dict[int, list[Enrollment]], learner_id: int) -> Enroll
     return next(iter(enrollments.get(learner_id, [])), None)
 
 
+def _unaccented(value: Any) -> ColumnElement[str]:
+    return func.immutable_unaccent(value)
+
+
+def _contains_pattern(token: str) -> ColumnElement[str]:
+    """A LIKE pattern for the unaccented token. Escaped after unaccenting, since
+    unaccent can itself produce these characters, and autoescape takes only plain strings."""
+    escaped: ColumnElement[str] = _unaccented(token)
+    for char in "/%_":
+        escaped = func.replace(escaped, char, f"/{char}")
+    return literal("%").concat(escaped).concat("%")
+
+
 def _name_token_matches(token: str) -> ColumnElement[bool]:
     # `%` finds misspellings ("Santoz" finds "Santos"); the substring match covers
-    # tokens too short to share trigrams. The trigram indexes serve both.
+    # tokens too short to share trigrams. The trigram indexes on the unaccented
+    # names serve both, so "Pena" finds "Peña".
+    last_name, first_name = _unaccented(Learner.last_name), _unaccented(Learner.first_name)
+    pattern = _contains_pattern(token)
     return or_(
-        Learner.last_name.op("%")(token),
-        Learner.first_name.op("%")(token),
-        Learner.last_name.icontains(token, autoescape=True),
-        Learner.first_name.icontains(token, autoescape=True),
+        last_name.op("%")(_unaccented(token)),
+        first_name.op("%")(_unaccented(token)),
+        last_name.ilike(pattern, escape="/"),
+        first_name.ilike(pattern, escape="/"),
     )
 
 
@@ -81,7 +97,8 @@ def search_learners(
     elif tokens:
         conditions.extend(_name_token_matches(t) for t in tokens)
         full_name = Learner.last_name + " " + Learner.first_name
-        order_by.insert(0, func.similarity(full_name, " ".join(tokens)).desc())
+        closeness = func.similarity(_unaccented(full_name), _unaccented(" ".join(tokens)))
+        order_by.insert(0, closeness.desc())
 
     # One EXISTS, so every filter must hold for the same enrollment: a learner in
     # Grade 8 last year and Grade 9 now is not found by this year + Grade 8.
@@ -170,7 +187,7 @@ def update_learner(
 
 
 def _normalized_name(value: Any) -> ColumnElement[str]:
-    return func.lower(func.regexp_replace(func.trim(value), r"\s+", " ", "g"))
+    return func.lower(func.regexp_replace(func.trim(_unaccented(value)), r"\s+", " ", "g"))
 
 
 def find_duplicates(session: Session, data: LearnerCreate) -> list[LearnerMatch]:

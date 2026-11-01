@@ -32,6 +32,8 @@ PROTECTED_ROUTES = {
         "registrar": 403,
         "reviewer": 403,
     },
+    ("GET", "/api/users"): {"anonymous": 401, "admin": 200, "registrar": 403, "reviewer": 403},
+    ("POST", "/api/users"): {"anonymous": 401, "admin": 201, "registrar": 403, "reviewer": 403},
     ("POST", "/api/enrollments"): {
         "anonymous": 401,
         "admin": 201,
@@ -86,6 +88,12 @@ REQUEST_BODIES = {
     },
     ("POST", "/api/users/{user_id}/reset-password"): lambda year: {
         "temporary_password": "temp-test-only-pw"
+    },
+    ("POST", "/api/users"): lambda year: {
+        "id_number": "N-0001",
+        "full_name": "New Testuser",
+        "role": "registrar",
+        "temporary_password": "temp-test-only-pw",
     },
     ("POST", "/api/enrollments"): lambda year: {
         "school_year_id": year.id,

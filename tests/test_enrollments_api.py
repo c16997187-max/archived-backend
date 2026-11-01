@@ -463,3 +463,88 @@ def test_ids_too_large_for_the_database_are_refused(client, headers, year, field
 
     assert response.status_code == 422
     assert field in response.json()["fields"]
+
+
+# --- duplicates: accents ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("stored", "typed"),
+    [("Peña", "Pena"), ("Muñoz", "Munoz"), ("Pena", "Peña"), ("Peña", "PENA")],
+)
+def test_same_name_ignoring_accents_returns_the_match(
+    client, db, headers, year, make_learner, stored, typed
+):
+    existing = make_learner(last_name=stored, birth_date=BIRTH_DATE)
+
+    response = post(
+        client, headers, year, learner=new_learner(last_name=typed, birth_date="2012-05-20")
+    )
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["error"] == "possible_duplicate"
+    assert [m["id"] for m in body["matches"]] == [existing.id]
+    assert body["matches"][0]["last_name"] == stored
+    assert body["matches"][0]["reasons"] == ["name_birth_date"]
+    assert count(db, Learner) == 1
+    assert count(db, Enrollment) == 0
+
+
+def test_accents_in_first_names_are_ignored_too(client, headers, year, make_learner):
+    make_learner(first_name="Niño", birth_date=BIRTH_DATE)
+
+    response = post(
+        client, headers, year, learner=new_learner(first_name="Nino", birth_date="2012-05-20")
+    )
+
+    assert response.status_code == 409
+
+
+def test_same_name_ignoring_accents_with_another_birth_date_is_not_a_duplicate(
+    client, headers, year, make_learner
+):
+    make_learner(last_name="Peña", birth_date=BIRTH_DATE)
+
+    response = post(
+        client, headers, year, learner=new_learner(last_name="Pena", birth_date="2012-05-21")
+    )
+
+    assert response.status_code == 201, response.text
+
+
+def test_confirming_an_accent_match_creates_and_records_the_override(
+    client, db, headers, year, make_learner
+):
+    existing = make_learner(last_name="Peña", birth_date=BIRTH_DATE)
+
+    response = post(
+        client,
+        headers,
+        year,
+        confirm_new_learner=True,
+        learner=new_learner(last_name="Pena", birth_date="2012-05-20"),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["learner"]["last_name"] == "Pena"
+    assert count(db, Learner) == 2
+    after = audit_rows(db, "learner")[0].after
+    assert after["duplicate_override"] is True
+    assert after["duplicate_override_matches"] == [existing.id]
+
+
+def test_an_accent_match_cannot_override_a_matching_lrn(client, db, headers, year, make_learner):
+    make_learner(last_name="Peña", lrn=LRN, birth_date=BIRTH_DATE)
+
+    response = post(
+        client,
+        headers,
+        year,
+        confirm_new_learner=True,
+        learner=new_learner(last_name="Pena", lrn=LRN, birth_date="2012-05-20"),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["matches"][0]["reasons"] == ["lrn", "name_birth_date"]
+    assert count(db, Learner) == 1

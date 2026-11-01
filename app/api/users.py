@@ -2,12 +2,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
 
-from app.api.deps import DbSession, client_ip, require_role
+from app.api.deps import DbSession, Paging, client_ip, require_role
 from app.models import User
 from app.models.user import ROLES
-from app.schemas.common import DbId
+from app.schemas.common import DbId, Page
 from app.schemas.errors import error_responses
-from app.schemas.users import ResetPasswordRequest, UserOut
+from app.schemas.users import ResetPasswordRequest, UserAdminOut, UserCreate, UserOut
 from app.services import users as users_service
 
 router = APIRouter(tags=["users"], responses=error_responses(401, 403))
@@ -19,6 +19,34 @@ def get_me(
     user: Annotated[User, Depends(require_role(*ROLES, allow_password_change=True))],
 ) -> User:
     return user
+
+
+@router.get("/users", response_model=Page[UserAdminOut], responses=error_responses(422))
+def list_users(
+    _: Annotated[User, Depends(require_role("admin"))], db: DbSession, paging: Paging
+) -> Page[UserAdminOut]:
+    return users_service.list_users(db, paging)
+
+
+@router.post(
+    "/users", response_model=UserAdminOut, status_code=201, responses=error_responses(409, 422)
+)
+def create_user(
+    body: UserCreate,
+    request: Request,
+    admin: Annotated[User, Depends(require_role("admin"))],
+    db: DbSession,
+) -> User:
+    return users_service.create_user(
+        db,
+        body.id_number,
+        body.full_name,
+        body.role,
+        body.temporary_password,
+        actor_id=admin.id,
+        ip=client_ip(request),
+        must_change_password=True,
+    )
 
 
 @router.post(

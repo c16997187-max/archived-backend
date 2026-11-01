@@ -472,3 +472,58 @@ def test_two_people_saving_the_same_lrn_at_once_gets_a_409(
     assert response.json()["error"] == "duplicate"
     monkeypatch.undo()
     assert db.get(Learner, learner.id).lrn is None
+
+
+# --- search: accents -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("stored", "q"),
+    [
+        ("Peña", "Pena"),
+        ("Peña", "pena"),
+        ("Peña", "PENA"),
+        ("Muñoz", "Munoz"),
+        ("Muñoz", "munoz"),
+        ("Muñoz", "MUNOZ"),
+        ("Pena", "Peña"),
+        ("Muñoz", "Mun"),
+        ("Muñoz", "Munos"),
+        ("José", "Jose"),
+        ("Jose", "José"),
+    ],
+)
+def test_search_ignores_accents(client, headers, make_learner, stored, q):
+    match = make_learner(last_name=stored, first_name="Testa")
+    make_learner(last_name="Bautista", first_name="Testb")
+
+    assert found_ids(client, headers, q=q) == [match.id]
+
+
+def test_search_ignores_accents_in_first_names(client, headers, make_learner):
+    match = make_learner(last_name="Testa", first_name="Niño")
+    make_learner(last_name="Testb", first_name="Angela")
+
+    assert found_ids(client, headers, q="Nino") == [match.id]
+
+
+def test_accented_names_come_back_unchanged(client, headers, make_learner):
+    make_learner(last_name="Peña", first_name="Niño")
+
+    row = search(client, headers, q="Pena Nino")["items"][0]
+
+    assert (row["last_name"], row["first_name"]) == ("Peña", "Niño")
+
+
+def test_the_closest_name_comes_first_without_the_accent(client, headers, make_learner):
+    near = make_learner(last_name="Peñaflor", first_name="Testa")
+    exact = make_learner(last_name="Peña", first_name="Testa")
+
+    assert found_ids(client, headers, q="Pena Testa") == [exact.id, near.id]
+
+
+@pytest.mark.parametrize("q", ["％", "＿", "⁄"])
+def test_characters_unaccent_turns_into_wildcards_stay_literal(client, headers, make_learner, q):
+    make_learner(last_name="Santos")
+
+    assert found_ids(client, headers, q=q) == []
