@@ -9,6 +9,7 @@ from app.models._common import created_at, one_of, pk
 
 DOCUMENT_SOURCES = ("phone", "upload", "batch")
 EXTRACTION_STATUSES = ("queued", "processing", "needs_review", "done", "failed")
+OCR_PATHS = ("template", "generic")
 CAPTURE_SESSION_STATUSES = ("open", "claimed", "closed", "expired")
 
 
@@ -80,7 +81,10 @@ class Extraction(Base):
     """One OCR run on one document."""
 
     __tablename__ = "extractions"
-    __table_args__ = (one_of("status", EXTRACTION_STATUSES, "status"),)
+    __table_args__ = (
+        one_of("status", EXTRACTION_STATUSES, "status"),
+        one_of("ocr_path", OCR_PATHS, "ocr_path"),
+    )
 
     id: Mapped[int] = pk()
     document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), index=True)
@@ -89,6 +93,14 @@ class Extraction(Base):
     started_at: Mapped[datetime | None]
     finished_at: Mapped[datetime | None]
     error: Mapped[str | None]
+    # Which path ran, so accuracy can be measured per path. Empty until decided.
+    ocr_path: Mapped[str | None]
+    # The matched template; stays empty on the generic path.
+    template_id: Mapped[int | None] = mapped_column(ForeignKey("form_templates.id"))
+    # Best score of any template, kept on generic runs too, for tuning the threshold.
+    alignment_score: Mapped[float | None]
+    # Everything read off the page, for the review screen. Never copy this to audit_log.
+    full_text: Mapped[str | None]
 
 
 class OcrResult(Base):
@@ -106,3 +118,4 @@ class OcrResult(Base):
     confidence: Mapped[float | None]
     bbox: Mapped[dict[str, Any] | None]  # {"x", "y", "w", "h"} in template pixels
     model_version: Mapped[str]
+    needs_check: Mapped[bool] = mapped_column(server_default=text("false"), default=False)
