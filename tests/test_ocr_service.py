@@ -2,6 +2,8 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -11,12 +13,16 @@ from app.config import Settings
 from app.errors import ApiError
 from app.models import AuditLog, Document, Extraction, FormTemplate, OcrResult, User
 from app.ocr import labels, preprocess
+from app.ocr.text_reader import Reading
 from app.services import form_templates, ocr
 from scripts.make_placeholder_form import render_form
 from tests.ocr_images import (
+    FakeDetector,
+    FakeRecognizer,
     StubReader,
     box,
     enrollment_layout,
+    fake_engine,
     save_png,
     tilted,
     unrelated_layout,
@@ -83,7 +89,7 @@ def _results(db: Session, document: Document) -> dict[str, OcrResult]:
     return {row.field_name: row for row in rows}
 
 
-def test_template_path_records_the_match_and_stays_processing(
+def test_template_path_without_models_records_the_match_and_waits(
     db, ocr_settings, active_template, make_document
 ):
     document = make_document(tilted(render_form(enrollment_layout())))
@@ -101,7 +107,7 @@ def test_template_path_records_the_match_and_stays_processing(
     assert [r.action for r in _audit_rows(db, extraction)] == ["start", "route"]
 
 
-def test_no_match_without_a_reader_is_generic_and_waits(
+def test_no_match_without_models_is_generic_and_waits(
     db, ocr_settings, active_template, make_document
 ):
     document = make_document(render_form(unrelated_layout(), "unrelated memo"))
@@ -123,7 +129,9 @@ def test_no_match_with_a_reader_flags_every_field_and_stores_the_text(
 ):
     document = make_document(render_form(unrelated_layout(), "unrelated memo"))
 
-    run = ocr.process_document(db, document.id, ocr_settings, StubReader(READABLE_PAGE))
+    run = ocr.process_document(
+        db, document.id, ocr_settings, fake_engine(text_reader=StubReader(READABLE_PAGE))
+    )
 
     extraction = run.extraction
     assert extraction.status == "needs_review"
@@ -143,14 +151,113 @@ def test_no_match_with_a_reader_flags_every_field_and_stores_the_text(
     assert results["address"].raw_text is None  # the label was there; its value was not
 
 
-def test_reader_is_not_used_on_the_template_path(db, ocr_settings, active_template, make_document):
-    document = make_document(render_form(enrollment_layout()))
+def _filled_enrollment() -> np.ndarray:
+    """The test form with a made-up surname and first name written in, and Male ticked."""
+    layout = enrollment_layout()
+    page = render_form(layout)
+    boxes = layout.boxes()
+    for name in ("last_name", "first_name"):
+        b = boxes[name]
+        cv2.putText(page, "Madeupname", (b.x + 15, b.y + 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, 0, 2)
+    male = boxes["sex_male"]
+    cv2.line(page, (male.x + 8, male.y + 8), (male.x + 32, male.y + 32), 0, 4)
+    cv2.line(page, (male.x + 32, male.y + 8), (male.x + 8, male.y + 32), 0, 4)
+    return page
 
-    run = ocr.process_document(db, document.id, ocr_settings, StubReader(READABLE_PAGE))
 
-    assert run.extraction.status == "processing"
-    assert run.extraction.ocr_path == "template"
-    assert _results(db, document) == {}
+def _reads_ink(confidence: float = 0.95):
+    """A recognizer that reads "Madeupname" wherever there is writing, and nothing elsewhere."""
+
+    def read(crop: np.ndarray) -> Reading:
+        return Reading("Madeupname", confidence) if (crop < 100).any() else Reading("", None)
+
+    return read
+
+
+def test_template_path_reads_every_field_and_needs_review(
+    db, ocr_settings, active_template, make_document
+):
+    document = make_document(tilted(_filled_enrollment()))
+    reader = StubReader(READABLE_PAGE)
+    engine = fake_engine(FakeRecognizer("fake-hand-1", read=_reads_ink()), text_reader=reader)
+
+    run = ocr.process_document(db, document.id, ocr_settings, engine)
+
+    extraction = run.extraction
+    assert extraction.status == "needs_review"
+    assert extraction.finished_at is not None
+    assert "last_name: Madeupname" in extraction.full_text
+    assert not reader.recognized  # the full-page reader is for the generic path
+
+    results = _results(db, document)
+    layout = enrollment_layout()
+    assert set(results) == {*layout.boxes(), "sex"}
+    assert all(r.template_id == active_template.id for r in results.values())
+    last = results["last_name"]
+    assert (last.raw_text, last.normalized_text) == ("Madeupname", "Madeupname")
+    assert last.confidence == pytest.approx(0.95)
+    assert not last.needs_check
+    assert last.model_version == "fake-hand-1"
+    box_ = layout.boxes()["last_name"]
+    assert last.bbox == {"x": box_.x, "y": box_.y, "w": box_.w, "h": box_.h}
+    # Empty and optional: nothing to check.
+    assert results["religion"].raw_text is None
+    assert not results["religion"].needs_check
+    # Empty and required, or no guardian or parent at all: flagged.
+    assert results["birth_date"].needs_check
+    assert results["guardian_name"].needs_check
+    assert results["sex_male"].raw_text == "checked"
+    assert results["sex_female"].raw_text == "unchecked"
+    assert (results["sex"].normalized_text, results["sex"].needs_check) == ("M", False)
+
+
+def test_template_path_flags_unsure_fields(db, ocr_settings, active_template, make_document):
+    document = make_document(_filled_enrollment())
+    engine = fake_engine(FakeRecognizer("fake-hand-1", read=_reads_ink(0.5)))
+
+    ocr.process_document(db, document.id, ocr_settings, engine)
+
+    last = _results(db, document)["last_name"]
+    assert last.normalized_text == "Madeupname"
+    assert last.needs_check
+
+
+def test_template_path_calls_each_model_once_per_form(
+    db, ocr_settings, active_template, make_document
+):
+    document = make_document(_filled_enrollment())
+    detector = FakeDetector()
+    handwriting = FakeRecognizer("fake-hand-1", read=_reads_ink())
+    engine = fake_engine(handwriting, detector=detector)
+
+    ocr.process_document(db, document.id, ocr_settings, engine)
+
+    handwritten = [b for b in enrollment_layout().boxes().values() if b.kind == "handwritten"]
+    assert detector.batches == [len(handwritten)]
+    assert len(handwriting.calls) == 1
+
+
+def test_template_audit_never_holds_what_was_read(db, ocr_settings, active_template, make_document):
+    document = make_document(_filled_enrollment())
+    engine = fake_engine(FakeRecognizer("fake-hand-1", read=_reads_ink()))
+
+    run = ocr.process_document(db, document.id, ocr_settings, engine)
+
+    rows = _audit_rows(db, run.extraction)
+    assert [r.action for r in rows] == ["start", "route", "finish"]
+    assert "Madeupname" not in json.dumps([[r.before, r.after] for r in rows])
+
+
+def test_template_path_writes_fields_to_the_debug_folder(
+    db, ocr_settings, active_template, make_document, tmp_path
+):
+    document = make_document(_filled_enrollment())
+    engine = fake_engine(FakeRecognizer("fake-hand-1", read=_reads_ink()))
+
+    ocr.process_document(db, document.id, ocr_settings, engine, debug_dir=tmp_path / "debug")
+
+    table = (tmp_path / "debug" / "06_fields.txt").read_text(encoding="utf-8")
+    assert "last_name\tMadeupname\tMadeupname\t0.950\t\t\tfake-hand-1" in table
 
 
 def test_page_with_almost_no_text_fails_as_not_a_form(
@@ -159,7 +266,7 @@ def test_page_with_almost_no_text_fails_as_not_a_form(
     document = make_document(white_page())
     out = tmp_path / "debug"
 
-    run = ocr.process_document(db, document.id, ocr_settings, StubReader([]), debug_dir=out)
+    run = ocr.process_document(db, document.id, ocr_settings, fake_engine(), debug_dir=out)
 
     extraction = run.extraction
     assert extraction.status == "failed"
@@ -208,7 +315,9 @@ def test_unknown_document_is_not_found(db, ocr_settings):
 def test_audit_never_holds_what_was_read(db, ocr_settings, active_template, make_document):
     document = make_document(render_form(unrelated_layout(), "unrelated memo"))
 
-    run = ocr.process_document(db, document.id, ocr_settings, StubReader(READABLE_PAGE))
+    run = ocr.process_document(
+        db, document.id, ocr_settings, fake_engine(text_reader=StubReader(READABLE_PAGE))
+    )
 
     rows = _audit_rows(db, run.extraction)
     assert [r.action for r in rows] == ["start", "route", "finish"]
@@ -250,11 +359,11 @@ def test_rerun_after_failure_keeps_the_failed_run(db, ocr_settings, make_documen
 
 def test_rerun_of_finished_work_changes_nothing(db, ocr_settings, active_template, make_document):
     document = make_document(render_form(unrelated_layout(), "unrelated memo"))
-    reader = StubReader(READABLE_PAGE)
-    first = ocr.process_document(db, document.id, ocr_settings, reader).extraction
+    engine = fake_engine(text_reader=StubReader(READABLE_PAGE))
+    first = ocr.process_document(db, document.id, ocr_settings, engine).extraction
     count = len(_results(db, document))
 
-    again = ocr.process_document(db, document.id, ocr_settings, reader)
+    again = ocr.process_document(db, document.id, ocr_settings, engine)
 
     assert again.extraction.id == first.id
     assert again.result is None

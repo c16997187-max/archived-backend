@@ -1,13 +1,15 @@
 """Run the OCR pipeline for one stored document and record the outcome (Phase 7).
 
-The worker calls this in Phase 9. Image work happens between commits, so a slow form never
-holds a transaction open. Audit rows carry status, path and score only: what was read off
+The worker calls this in Phase 9, with the engine from `app.ocr.models.get_engine`, loaded
+once per process. Image and model work happens between commits, so a slow form never holds
+a transaction open. Audit rows carry status, path and score only: what was read off
 the page is a minor's data and stays in `extractions.full_text` and `ocr_results`.
 """
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,8 +19,11 @@ from app.errors import ApiError
 from app.models import Document, Extraction, OcrResult
 from app.ocr import labels, preprocess
 from app.ocr.preprocess import DebugSink, PreprocessFailure, PreprocessResult
-from app.ocr.text_reader import TextReader
+from app.ocr.recognize import FieldResult, recognize_crops
 from app.services import audit, form_templates
+
+if TYPE_CHECKING:
+    from app.ocr.models import OcrEngine
 
 _FINISHED_STATUSES = ("needs_review", "done")
 _RUNNING_STATUSES = ("queued", "processing")
@@ -101,25 +106,65 @@ def _save_generic_page(session: Session, extraction: Extraction, page: labels.Ge
                 needs_check=True,
             )
         )
+    _finish(session, extraction, page.full_text)
+
+
+def _save_template_fields(
+    session: Session, extraction: Extraction, fields: list[FieldResult]
+) -> None:
+    """Step 10."""
+    for field in fields:
+        session.add(
+            OcrResult(
+                document_id=extraction.document_id,
+                template_id=extraction.template_id,
+                field_name=field.name,
+                raw_text=field.raw,
+                normalized_text=field.normalized,
+                confidence=field.confidence,
+                bbox=field.bbox,
+                model_version=field.model_version,
+                needs_check=field.needs_check,
+            )
+        )
+    text = "\n".join(f"{field.name}: {field.raw}" for field in fields if field.raw)
+    _finish(session, extraction, text)
+
+
+def _finish(session: Session, extraction: Extraction, full_text: str) -> None:
     before = extraction.status
-    extraction.full_text = page.full_text
+    extraction.full_text = full_text
     extraction.status = "needs_review"
     extraction.finished_at = _now()
     _record_status(session, extraction, "finish", before)
+
+
+def debug_fields(debug: DebugSink, fields: list[FieldResult]) -> None:
+    """What was read, for checking by eye. Under storage/ only, never the log."""
+    rows = [("field", "raw", "normalized", "confidence", "flag", "problem", "model")]
+    for f in fields:
+        confidence = "" if f.confidence is None else f"{f.confidence:.3f}"
+        flag = "CHECK" if f.needs_check else ""
+        rows.append(
+            (f.name, f.raw or "", f.normalized or "", confidence, flag, f.problem or "",
+             f.model_version)
+        )  # fmt: skip
+    debug.text("06_fields", "\n".join("\t".join(row) for row in rows))
 
 
 def process_document(
     session: Session,
     document_id: int,
     settings: Settings,
-    reader: TextReader | None = None,
+    engine: "OcrEngine | None" = None,
     debug_dir: Path | None = None,
 ) -> OcrRun:
-    """Steps 1 to 5, then the generic path when no template matched.
+    """Steps 1 to 10. A template match reads each field crop; otherwise the generic path
+    reads the whole page.
 
-    With no `reader` a generic page waits in `processing`, like a template match does until
-    recognition exists. Only expected failures mark the extraction `failed`; anything else
-    propagates for the worker's retries.
+    With no `engine` (models not installed) the extraction waits in `processing` after
+    routing. Only expected failures mark it `failed`; anything else propagates for the
+    worker's retries.
     """
     document = session.get(Document, document_id)
     if document is None:
@@ -146,13 +191,20 @@ def process_document(
     extraction.alignment_score = result.alignment_score
     _record_status(session, extraction, "route", before)
 
-    if result.ocr_path == preprocess.GENERIC_PATH and reader is not None:
-        try:
-            page = labels.read_generic_page(result.clean_page, reader)
-        except PreprocessFailure as failure:
-            if debug:
-                debug.text("failure", failure.reason)
-            _fail(session, extraction, failure.reason)
-            return OcrRun(extraction, None)
-        _save_generic_page(session, extraction, page)
+    if engine is None:
+        return OcrRun(extraction, result)
+    if result.ocr_path == preprocess.TEMPLATE_PATH:
+        fields = recognize_crops(result.crops, engine, settings.ocr_confidence_threshold)
+        if debug:
+            debug_fields(debug, fields)
+        _save_template_fields(session, extraction, fields)
+        return OcrRun(extraction, result)
+    try:
+        page = labels.read_generic_page(result.clean_page, engine.text_reader)
+    except PreprocessFailure as failure:
+        if debug:
+            debug.text("failure", failure.reason)
+        _fail(session, extraction, failure.reason)
+        return OcrRun(extraction, None)
+    _save_generic_page(session, extraction, page)
     return OcrRun(extraction, result)

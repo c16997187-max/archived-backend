@@ -1,8 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Used only outside production, so a fresh dev checkout runs without a .env.
@@ -26,6 +26,16 @@ class Settings(BaseSettings):
     models_dir: Path = Path("models")
     # Blank form images and their field_boxes JSON (Phase 7).
     form_templates_dir: Path = Path("docs/forms")
+    # OCR (Phase 7). Handwriting is read with PP-OCRv6 by default: in the README benchmark it
+    # was 3.5x faster, used 2.7x less memory and read more fields right than TrOCR, and its
+    # license allows commercial use. "trocr" stays selectable for comparison on real forms.
+    ocr_handwriting_model: Literal["trocr", "ppocr"] = "ppocr"
+    ocr_det_tier: Literal["tiny", "small", "medium"] = "small"
+    # ONNX Runtime threads. Unset means one per physical core.
+    ocr_threads: int | None = Field(default=None, ge=1)
+    # Fields whose least sure character scores below this are flagged for review. Tune it on
+    # the Step 0 test set so most wrong fields are flagged.
+    ocr_confidence_threshold: float = Field(default=0.80, ge=0, le=1)
     # Required in production (see _check_production_secrets); dev falls back to DEV_JWT_SECRET.
     jwt_secret: str | None = None
     access_token_minutes: int = 30
