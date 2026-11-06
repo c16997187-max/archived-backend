@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from app.ocr.labels import (
-    MIN_TEXT_CHARS,
+    MIN_TEXT_REGIONS,
     REASON_NOT_A_FORM,
     extract_fields,
     full_text,
@@ -209,12 +209,29 @@ def test_full_text_follows_reading_order():
     assert full_text(boxes) == "first second\nthird"
 
 
-def test_page_with_almost_no_text_is_not_a_form():
+# Enough labelled text for a form: five lines of labels and values.
+FORM_TEXT = [
+    box("LRN", 100, 300),
+    box("123456789012345678", 400, 300),
+    box("Name", 100, 400),
+    box("Madeupname", 400, 400),
+    box("Address", 100, 500),
+]
+
+
+def test_page_with_too_few_text_regions_is_not_a_form():
     page = np.zeros((2200, 1700), dtype=np.uint8)
-    reader = StubReader([box("x" * (MIN_TEXT_CHARS - 1), 100, 300)])
+    reader = StubReader(FORM_TEXT[: MIN_TEXT_REGIONS - 1])
     with pytest.raises(PreprocessFailure) as failure:
         read_generic_page(page, reader)
     assert failure.value.reason == REASON_NOT_A_FORM
+    assert not reader.recognized  # decided from the detector alone
+
+
+def test_page_with_tiny_specks_of_text_is_not_a_form():
+    specks = [box("x", 100 * i, 300, w=4, h=4) for i in range(1, 12)]
+    with pytest.raises(PreprocessFailure):
+        read_generic_page(np.zeros((2200, 1700), dtype=np.uint8), StubReader(specks))
 
 
 def test_empty_page_is_not_a_form():
@@ -223,8 +240,8 @@ def test_empty_page_is_not_a_form():
 
 
 def test_generic_page_holds_text_fields_and_model_version():
-    reader = StubReader([box("LRN", 100, 300), box("123456789012345678", 400, 300)])
+    reader = StubReader(FORM_TEXT)
     page = read_generic_page(np.zeros((2200, 1700), dtype=np.uint8), reader)
-    assert page.full_text == "LRN 123456789012345678"
+    assert page.full_text.startswith("LRN 123456789012345678\n")
     assert page.fields[0].name == "lrn"
     assert page.model_version == reader.model_version

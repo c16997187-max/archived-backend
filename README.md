@@ -103,6 +103,104 @@ from the teachers' Wi-Fi.
 then scan a real QR code and send one photo. Plain HTTP works because the page uses
 the phone's own camera app through a file input, not live camera access.
 
+## OCR models
+
+The worker reads forms with PP-OCRv6 on CPU with ONNX Runtime: text detection, printed
+text and, by default, handwriting. TrOCR base-handwritten can read the handwritten fields
+instead (`OCR_HANDWRITING_MODEL=trocr`). The worker loads models only from `models/` and
+never downloads anything; every file is checked against `models/manifest.json` when the
+worker starts.
+
+**Why PP-OCRv6 reads handwriting by default.** The Phase 1 plan named TrOCR for
+handwriting. The benchmark below changed that:
+
+- **Speed.** 9.6 s per form against 34.1 s. Phase 9 batches of 300 forms take about 50
+  minutes instead of nearly 3 hours.
+- **Memory.** 1.1 GB peak against 2.9 GB, which leaves the API and PostgreSQL far more of
+  the host's 16 GB.
+- **Accuracy on generated forms.** 99.5% of fields exact against 54.3%. TrOCR also invents
+  text in blank space and adds stray full stops.
+- **License.** Everything PP-OCRv6 uses is Apache-2.0. TrOCR carries the IAM caveat below.
+
+The accuracy figures come from a computer script font, not real handwriting, where TrOCR
+may do better. TrOCR stays installed and selectable so both can be scored on the Step 0
+forms. Switch only if it wins there by enough to justify the time, the memory and the
+license question.
+
+**Getting the models (once, on a machine with internet).** The export tools are large and
+pin an older transformers, so they get their own virtual environment:
+
+```bash
+py -V:3.12 -m venv .venv-models
+.venv-models\Scripts\pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-models.txt
+.venv-models\Scripts\python -m scripts.download_models
+```
+
+This downloads PP-OCRv6 (small tier; add `--tiers tiny,small,medium` for the others) and
+TrOCR, each pinned to a commit and checked against a SHA-256 in the script. A changed
+file is refused. Then it exports TrOCR to ONNX: the decoder is quantized to INT8, and the
+encoder stays FP32 because every INT8 encoder tried read noticeably worse. Running it
+again skips models that are already intact. With the small tier `models/` is about
+650 MB, of which TrOCR is 620 MB. With `--skip-trocr` it is about 30 MB, enough for the
+default `ppocr`. `models/` is gitignored: copy it to the host PC with the install.
+`models/_downloads/` is only a cache and can be deleted.
+
+**Settings** (`.env`): `OCR_HANDWRITING_MODEL` (`ppocr`, the default, or `trocr`), `OCR_DET_TIER`,
+`OCR_CONFIDENCE_THRESHOLD`, `OCR_THREADS` (default: one per physical core, so the API
+keeps the remaining hyper-threads).
+
+**Comparing the two handwriting models:**
+
+- Speed and memory on this machine: `python -m scripts.bench_ocr --forms 20`
+- Accuracy on the Step 0 test set: run `python -m scripts.ocr_debug --images-dir
+  private_data/forms --recognize --handwriting trocr --predictions private_data/trocr.csv`,
+  then the same with `ppocr`. Score each with `python -m scripts.eval_ocr --labels
+  private_data/labels.csv --predictions private_data/trocr.csv`.
+
+**Measured on 2026-11-07** (development laptop: Intel Core i5-12500H, 12 cores / 16
+threads, 24 GB RAM, Windows 11; 10 generated forms each, PP-OCRv6 small, 12 threads):
+
+| Handwriting | Load | Seconds per form (p95) | of which preprocessing | Peak memory | CER* | Fields exact* |
+| --- | --- | --- | --- | --- | --- | --- |
+| `trocr` | 6.5 s | 34.1 (36.4) | 6.8 s | 2.9 GB | 16.3% | 54.3% |
+| `ppocr` | 1.3 s | 9.6 (10.2) | 7.1 s | 1.1 GB | 0.1% | 99.5% |
+
+\* The generated forms use a computer script font, not handwriting, so these accuracy
+numbers only rank the models on typed-looking text and catch regressions. TrOCR's time
+goes into its FP32 encoder (about 1.2 s per line on this laptop), which is why fields where
+the detector finds no writing are not sent to it. Re-run on the host PC and on the Step 0
+forms before choosing; laptop timings vary with heat.
+
+### Licenses
+
+ArchivED is meant to be sold to schools, so every model and library it ships must allow
+commercial use. Checked on 2026-11-07:
+
+| Component | Used for | License |
+| --- | --- | --- |
+| PP-OCRv6 weights (`PaddlePaddle/PP-OCRv6_*_onnx`) | Detection, printed text, `ppocr` handwriting | Apache-2.0 |
+| PaddleOCR (pre/post-processing reimplemented from it) | | Apache-2.0 |
+| TrOCR base-handwritten (`microsoft/trocr-base-handwritten`) | `trocr` handwriting | MIT tag on the model card; code (microsoft/unilm) MIT. **See the IAM caveat below.** |
+| ONNX Runtime | Running the models | MIT |
+| tokenizers | TrOCR's tokenizer | Apache-2.0 |
+| huggingface_hub | Pulled in by tokenizers; never imported at runtime | Apache-2.0 |
+| psutil | Physical core count, benchmark memory | BSD-3-Clause |
+| OpenCV (`opencv-python-headless`) | Image processing | Apache-2.0. The wheel bundles FFmpeg under LGPL-2.1: ship the wheel unmodified. |
+| NumPy | Arrays | BSD-3-Clause |
+| Pillow | Image loading | MIT-CMU (HPND) |
+| PyYAML | Reading PP-OCRv6 configs | MIT |
+| PyTorch, transformers, optimum, optimum-onnx, onnx | Export only (`requirements-models.txt`); not shipped | BSD-3-Clause; Apache-2.0 for the rest |
+
+**IAM caveat (TrOCR).** TrOCR base-handwritten was fine-tuned on the IAM Handwriting
+Database. IAM's terms of use have historically allowed only non-commercial research use.
+Its site refused connections when this was checked, so check the current terms yourself. The MIT
+tag on the weights may not settle whether a model trained on IAM may be used commercially.
+Until that is confirmed in writing (from the IAM maintainers, or by legal review), treat
+TrOCR as fine for the pilot and the thesis but not for paid deployments.
+**`OCR_HANDWRITING_MODEL=ppocr`, the default, is the license-safe option for commercial
+deployments:** everything it uses is Apache-2.0 or more permissive. A third option is to
+fine-tune a model only on consented school crops (Phase 7, "Measure and tune").
+
 ## Run
 
 - API: `uvicorn app.main:app --reload` (docs at http://127.0.0.1:8000/docs)

@@ -5,9 +5,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from app.ocr.models import OcrEngine
 from app.ocr.preprocess import TemplateCandidate
 from app.ocr.templates import FormLayout, parse_layout
-from app.ocr.text_reader import TextBox
+from app.ocr.text_reader import Reading, Region, TextBox
 from scripts.make_placeholder_form import render_form
 
 PAGE = {"width": 1700, "height": 2200}
@@ -121,7 +122,76 @@ class StubReader:
 
     def __init__(self, boxes: list[TextBox]) -> None:
         self.boxes = boxes
+        self.recognized = False
+
+    def detect(self, page: np.ndarray) -> list[Region]:
+        assert page.ndim == 2  # the cleaned grayscale page, never the colour photo
+        return [Region(b.x, b.y, b.w, b.h, 0.9) for b in self.boxes]
+
+    def recognize(self, page: np.ndarray, regions: list[Region]) -> list[TextBox]:
+        self.recognized = True
+        return self.boxes
 
     def read(self, page: np.ndarray) -> list[TextBox]:
-        assert page.ndim == 2  # the cleaned grayscale page, never the colour photo
-        return self.boxes
+        return self.recognize(page, self.detect(page))
+
+
+def ink_lines(image: np.ndarray) -> list[Region]:
+    """Each band of rows holding ink, as a detector would box a line of writing."""
+    ink = image < 128
+    rows = np.flatnonzero(ink.any(axis=1))
+    regions = []
+    if rows.size:
+        breaks = np.flatnonzero(np.diff(rows) > 1)
+        starts, ends = np.r_[rows[0], rows[breaks + 1]], np.r_[rows[breaks], rows[-1]]
+        for start, end in zip(starts, ends, strict=True):
+            cols = np.flatnonzero(ink[start : end + 1].any(axis=0))
+            regions.append(
+                Region(
+                    int(cols[0]), int(start), int(cols[-1] - cols[0] + 1), int(end - start + 1), 0.9
+                )
+            )
+    return regions
+
+
+class FakeDetector:
+    """Boxes each band of dark rows. Records the size of every batch it is given."""
+
+    model_version = "fake-det-1"
+
+    def __init__(self) -> None:
+        self.batches: list[int] = []
+
+    def detect_batch(self, images) -> list[list[Region]]:
+        self.batches.append(len(images))
+        return [ink_lines(image) for image in images]
+
+
+class FakeRecognizer:
+    """Answers every crop with `reading`, or with `read(crop)`. Records each call's crops and
+    length limits."""
+
+    def __init__(self, model_version: str, reading: Reading | None = None, read=None) -> None:
+        self.model_version = model_version
+        self.reading = reading or Reading("Madeupname", 0.95)
+        self.read = read
+        self.calls: list[tuple[list[np.ndarray], list[int] | None]] = []
+
+    def recognize_batch(self, crops, max_tokens=None) -> list[Reading]:
+        self.calls.append((list(crops), None if max_tokens is None else list(max_tokens)))
+        return [self.read(c) if self.read else self.reading for c in crops]
+
+
+def fake_engine(
+    handwriting: FakeRecognizer | None = None,
+    printed: FakeRecognizer | None = None,
+    text_reader: StubReader | None = None,
+    detector: FakeDetector | None = None,
+) -> OcrEngine:
+    return OcrEngine(
+        detector=detector or FakeDetector(),
+        printed=printed or FakeRecognizer("fake-printed-1"),
+        handwriting=handwriting or FakeRecognizer("fake-hand-1"),
+        text_reader=text_reader or StubReader([]),
+        threads=1,
+    )

@@ -12,10 +12,13 @@ from difflib import SequenceMatcher
 import numpy as np
 
 from app.ocr.preprocess import PreprocessFailure
-from app.ocr.text_reader import TextBox, TextReader
+from app.ocr.text_reader import Region, TextBox, TextReader
 
-# A page with less text than this is not a form. Tune with the real reader in Part 2.
-MIN_TEXT_CHARS = 20
+# A page where the detector finds fewer text regions than this, or text covering less of the
+# page than this share, is not a form. Checked before recognition, so a photo of a wall costs
+# one detector call. A generated blank form has 26 regions covering about 1.8%.
+MIN_TEXT_REGIONS = 5
+MIN_TEXT_AREA_RATIO = 0.002
 REASON_NOT_A_FORM = "This does not look like a form: almost no text was found on the page."
 
 SECTION_NAME = "school_year"
@@ -318,12 +321,20 @@ def extract_fields(boxes: list[TextBox], page_size: tuple[int, int]) -> list[Gen
     return list(fields.values())
 
 
+def looks_like_a_form(regions: list[Region], page_size: tuple[int, int]) -> bool:
+    """Judged from how much text the detector found, before anything is read."""
+    width, height = page_size
+    area = sum(r.w * r.h for r in regions)
+    return len(regions) >= MIN_TEXT_REGIONS and area >= MIN_TEXT_AREA_RATIO * width * height
+
+
 def read_generic_page(page: np.ndarray, reader: TextReader) -> GenericPage:
     """The generic path's whole job: read the page, or say it is not a form."""
-    boxes = reader.read(page)
-    if sum(len(b.text.strip()) for b in boxes) < MIN_TEXT_CHARS:
-        raise PreprocessFailure(REASON_NOT_A_FORM)
     height, width = page.shape[:2]
+    regions = reader.detect(page)
+    if not looks_like_a_form(regions, (width, height)):
+        raise PreprocessFailure(REASON_NOT_A_FORM)
+    boxes = reader.recognize(page, regions)
     return GenericPage(
         full_text(boxes), extract_fields(boxes, (width, height)), reader.model_version
     )
