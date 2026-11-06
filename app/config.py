@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://archived:archived@127.0.0.1:5432/archived"
     storage_dir: Path = Path("storage")
     models_dir: Path = Path("models")
+    # Blank form images and their field_boxes JSON (Phase 7).
+    form_templates_dir: Path = Path("docs/forms")
     # Required in production (see _check_production_secrets); dev falls back to DEV_JWT_SECRET.
     jwt_secret: str | None = None
     access_token_minutes: int = 30

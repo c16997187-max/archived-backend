@@ -1,0 +1,33 @@
+{
+  "format_version": 1,
+  "name": "enrollment",
+  "version": 1,
+  "provisional": true,
+  "image": "enrollment_v1_placeholder.png",
+  "page": {"width": 1700, "height": 2200},
+  "fields": {
+    "school_year":           {"x": 100,  "y": 260,  "w": 700, "h": 80, "kind": "handwritten"},
+    "grade_level":           {"x": 900,  "y": 260,  "w": 700, "h": 80, "kind": "handwritten"},
+    "lrn":                   {"x": 100,  "y": 400,  "w": 700, "h": 80, "kind": "handwritten"},
+    "sex_male":              {"x": 900,  "y": 420,  "w": 40,  "h": 40, "kind": "checkbox"},
+    "sex_female":            {"x": 1150, "y": 420,  "w": 40,  "h": 40, "kind": "checkbox"},
+    "last_name":             {"x": 100,  "y": 540,  "w": 700, "h": 80, "kind": "handwritten"},
+    "first_name":            {"x": 900,  "y": 540,  "w": 700, "h": 80, "kind": "handwritten"},
+    "middle_name":           {"x": 100,  "y": 680,  "w": 700, "h": 80, "kind": "handwritten"},
+    "extension":             {"x": 900,  "y": 680,  "w": 700, "h": 80, "kind": "handwritten"},
+    "birth_date":            {"x": 100,  "y": 820,  "w": 700, "h": 80, "kind": "handwritten"},
+    "place_of_birth":        {"x": 900,  "y": 820,  "w": 700, "h": 80, "kind": "handwritten"},
+    "mother_tongue":         {"x": 100,  "y": 960,  "w": 700, "h": 80, "kind": "handwritten"},
+    "religion":              {"x": 900,  "y": 960,  "w": 700, "h": 80, "kind": "handwritten"},
+    "ip_group":              {"x": 100,  "y": 1100, "w": 700, "h": 80, "kind": "handwritten"},
+    "house_street":          {"x": 900,  "y": 1100, "w": 700, "h": 80, "kind": "handwritten"},
+    "barangay":              {"x": 100,  "y": 1240, "w": 700, "h": 80, "kind": "handwritten"},
+    "municipality":          {"x": 900,  "y": 1240, "w": 700, "h": 80, "kind": "handwritten"},
+    "province":              {"x": 100,  "y": 1380, "w": 700, "h": 80, "kind": "handwritten"},
+    "contact_number":        {"x": 900,  "y": 1380, "w": 700, "h": 80, "kind": "handwritten"},
+    "father_name":           {"x": 100,  "y": 1520, "w": 700, "h": 80, "kind": "handwritten"},
+    "mother_name":           {"x": 900,  "y": 1520, "w": 700, "h": 80, "kind": "handwritten"},
+    "guardian_name":         {"x": 100,  "y": 1660, "w": 700, "h": 80, "kind": "handwritten"},
+    "guardian_relationship": {"x": 900,  "y": 1660, "w": 700, "h": 80, "kind": "handwritten"}
+  }
+}

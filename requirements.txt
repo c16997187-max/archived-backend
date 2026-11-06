@@ -12,6 +12,8 @@ PyJWT==2.15.1
 python-multipart==0.0.33
 Pillow==13.0.0
 pillow-heif==1.8.1
+numpy==2.5.4
+opencv-python-headless==5.0.0.93
 
 # Transitive
 annotated-doc==0.0.5
